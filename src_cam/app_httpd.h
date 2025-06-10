@@ -1,0 +1,8 @@
+//
+// Created by mr on 1/8/2025.
+//
+
+#ifndef ESP32_S3_DEVKITC_1_APP_HTTPD_H
+#define ESP32_S3_DEVKITC_1_APP_HTTPD_H
+
+#endif //ESP32_S3_DEVKITC_1_APP_HTTPD_H
