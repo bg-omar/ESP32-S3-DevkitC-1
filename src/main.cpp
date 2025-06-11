@@ -54,6 +54,14 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define POTENTIOMETER_LX_PIN ADC1_CHANNEL_4  // Use GPIO 5
 #define POTENTIOMETER_LY_PIN ADC1_CHANNEL_3 // Use GPIO 4
 
+// GPIO numbers for the analog inputs
+#define POTENTIOMETER1_GPIO 19
+#define POTENTIOMETER2_GPIO 20
+#define POTENTIOMETER_RX_GPIO 7
+#define POTENTIOMETER_RY_GPIO 6
+#define POTENTIOMETER_LX_GPIO 5
+#define POTENTIOMETER_LY_GPIO 4
+
 // --- Buttons ---
 #define BUTTON_L_PIN 10           // GPIO10, input_pullup
 #define BUTTON_R_PIN 11           // GPIO11,
@@ -147,13 +155,35 @@ void setup() {
 		Serial.println(F("SSD1306 allocation failed"));
 		for(;;);
 	}
-	display.clearDisplay();
-	display.setTextSize(1);
-	display.setTextColor(SSD1306_WHITE);
-	display.setCursor(0, 0);
-	display.print("Initializing...");
-	display.display();
-	delay(500);
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setTextColor(SSD1306_WHITE);
+        display.setCursor(0, 0);
+        display.println("3-Phase:");
+        display.setCursor(0, 10);
+        display.print("P1="); display.print(PHASE_1_PIN);
+        display.print(" P2="); display.print(PHASE_2_PIN);
+        display.print(" P3="); display.print(PHASE_3_PIN);
+        display.setCursor(0, 20);
+        display.println("Inputs:");
+        display.setCursor(0, 30);
+        display.print("BtnL="); display.print(BUTTON_L_PIN);
+        display.print(" BtnR="); display.print(BUTTON_R_PIN);
+        display.setCursor(0, 40);
+        display.print("Pot1="); display.print(POTENTIOMETER1_GPIO);
+        display.print(" Pot2="); display.print(POTENTIOMETER2_GPIO);
+        display.setCursor(0, 50);
+        display.print("Rx="); display.print(POTENTIOMETER_RX_GPIO);
+        display.print(" Ry="); display.print(POTENTIOMETER_RY_GPIO);
+        display.print(" Lx="); display.print(POTENTIOMETER_LX_GPIO);
+        display.print(" Ly="); display.print(POTENTIOMETER_LY_GPIO);
+        display.display();
+        delay(2000);
+        display.clearDisplay();
+        display.setCursor(0, 0);
+        display.print("Initializing...");
+        display.display();
+        delay(500);
 	// Disable touch functionality for GPIO 4 (T0)
 	touch_pad_deinit();
 
