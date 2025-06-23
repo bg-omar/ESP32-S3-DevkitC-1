@@ -120,6 +120,7 @@ enum Option {
         OPTION_BITRATE,
         OPTION_DUTY_CYCLE,
         OPTION_WAVE_SHAPE,
+        OPTION_TEST_MODE,
         NUM_OPTIONS
 };
 
@@ -127,7 +128,8 @@ const char *OPTION_NAMES[] = {
         "Freq",
         "Bits",
         "Duty",
-        "Wave"
+        "Wave",
+        "Test"
 };
 
 enum WaveShape {
@@ -139,6 +141,22 @@ enum WaveShape {
 };
 
 const char *WAVE_NAMES[] = {"saw", "sin", "square", "invSaw"};
+int sawStep = 0;
+int sawMax = 1023;  // For 10-bit PWM
+int sawIncrement = 8; // Step per loop; defines slope
+
+const int sineTableSize = 64;
+const uint16_t sineTable[sineTableSize] = {
+		512, 562, 611, 659, 705, 750, 791, 830,
+		866, 899, 928, 953, 974, 991,1003,1011,
+		1013,1011,1003, 991, 974, 953, 928, 899,
+		866, 830, 791, 750, 705, 659, 611, 562,
+		512, 461, 412, 364, 318, 273, 232, 193,
+		157, 124,  95,  70,  49,  32,  20,  12,
+		10,  12,  20,  32,  49,  70,  95, 124,
+		157, 193, 232, 273, 318, 364, 412, 461
+};
+int sineIndex = 0;
 
 int currentOption = OPTION_FREQ_MODE;
 int bitrate = 8;                // default resolution bits
@@ -194,6 +212,17 @@ void updatePWM(int timer_num, int freq_hz, int resolution_bits) {
 
 static float mapFloat(float x, float in_min, float in_max, float out_min, float out_max) {
         return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+void setAllPWM(int duty) {
+	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, duty);
+	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+
+	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, duty);
+	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2);
 }
 
 
@@ -324,7 +353,7 @@ void loop() {
 
                         // Print button state
                         if (buttonRState == LOW) {
-                                if (currentOption < NUM_OPTIONS - 1) currentOption++;
+                                currentOption = (currentOption + 1) % NUM_OPTIONS;
                                 Serial.print("Option: ");
                                 Serial.println(currentOption);
                         }
@@ -338,17 +367,19 @@ void loop() {
 
                         // Print button state
                         if (buttonLState == LOW) {
-                                if (currentOption > 0) currentOption--;
+                                currentOption = (currentOption + NUM_OPTIONS - 1) % NUM_OPTIONS;
                                 Serial.print("Option: ");
                                 Serial.println(currentOption);
                         }
                 }
         }
 
-	lastButtonRState = readingR;
-	lastButtonLState = readingL;
-        display.print("L: "); display.print(lastButtonLState ? "Off" : "On");
-        display.print(" \t R: "); display.println(lastButtonRState ? "Off" : "On");
+        lastButtonRState = readingR;
+        lastButtonLState = readingL;
+        if (currentOption == OPTION_TEST_MODE) {
+                display.print("L: "); display.print(lastButtonLState ? "Off" : "On");
+                display.print(" \t R: "); display.println(lastButtonRState ? "Off" : "On");
+        }
         display.print("Opt: "); display.print(OPTION_NAMES[currentOption]);
         display.print(" ");
         switch(currentOption) {
@@ -360,12 +391,20 @@ void loop() {
                         display.println(" bits");
                         break;
                 case OPTION_DUTY_CYCLE:
-                        display.println(dutyCycleSetting);
+                        display.print(dutyCycleSetting);
+                        display.println("%");
                         break;
                 case OPTION_WAVE_SHAPE:
                         display.println(WAVE_NAMES[waveShape]);
                         break;
+                case OPTION_TEST_MODE:
+                        display.println();
+                        break;
         }
+
+        display.print("Bit: "); display.print(bitrate);
+        display.print("  Duty: "); display.print(dutyCycleSetting);
+        display.println("%");
 
 	int pot1Raw = 0;
 	esp_err_t pot1Status = adc2_get_raw(POTENTIOMETER1_PIN, ADC_WIDTH_BIT_12, &pot1Raw);
@@ -392,23 +431,27 @@ void loop() {
 	pot1Value= map(pot1Value, 0, 2047, 0, 4095);
 	pot2Value= map(pot2Value, 0, 2047, 0, 4095);
 
-	display.print("1: "); display.print(pot1Value);
-	display.print(" \t 2: "); display.println(pot2Value);
+        if (currentOption == OPTION_TEST_MODE) {
+                display.print("1: "); display.print(pot1Value);
+                display.print(" \t 2: "); display.println(pot2Value);
+        }
 
-	switch(currentOption) {
-			case OPTION_FREQ_MODE:
-					presetIndex = map(pot2Value, 0, 2047, 0, NUM_PRESETS-1);
-					break;
-			case OPTION_BITRATE:
-					bitrate = map(pot2Value, 0, 2047, 1, 15);
-					break;
-			case OPTION_DUTY_CYCLE:
-					dutyCycleSetting = map(pot2Value, 0, 2047, 0, 1023);
-					break;
-			case OPTION_WAVE_SHAPE:
-					waveShape = map(pot2Value, 0, 2047, 0, NUM_WAVES-1);
-					break;
-	}
+        switch(currentOption) {
+                case OPTION_FREQ_MODE:
+                        presetIndex = map(pot2Value, 0, 4095, 0, NUM_PRESETS-1);
+                        break;
+                case OPTION_BITRATE:
+                        bitrate = map(pot2Value, 0, 4095, 1, 12);
+                        break;
+                case OPTION_DUTY_CYCLE:
+                        dutyCycleSetting = map(pot2Value, 0, 4095, 0, 100);
+                        break;
+                case OPTION_WAVE_SHAPE:
+                        waveShape = map(pot2Value, 0, 4095, 0, NUM_WAVES-1);
+                        break;
+                case OPTION_TEST_MODE:
+                        break;
+        }
 
 	int potRxValue = main::smoothPotValue(potRxRaw, adcBuffer3, bufferSize);
 	int potRyValue = main::smoothPotValue(potRyRaw, adcBuffer4, bufferSize);
@@ -452,10 +495,12 @@ void loop() {
 	ryMapped = constrain(ryMapped, 0, 4095);
 
 
-	display.print("Lx: "); display.print(lxMapped);
-	display.print(" \t Ly: "); display.println(lyMapped);
-	display.print("Rx: "); display.print(rxMapped);
-	display.print(" \t Ry: "); display.println(ryMapped);
+        if (currentOption == OPTION_TEST_MODE) {
+                display.print("Lx: "); display.print(lxMapped);
+                display.print(" \t Ly: "); display.println(lyMapped);
+                display.print("Rx: "); display.print(rxMapped);
+                display.print(" \t Ry: "); display.println(ryMapped);
+        }
 
 
 
@@ -476,7 +521,7 @@ void loop() {
                                        maxFreq);
         baseFrequency = constrain(baseFrequency, minFreq, maxFreq);
 
-        int dutyCycle = dutyCycleSetting;
+        int dutyCycle = map(dutyCycleSetting, 0, 100, 0, 1023);
 
 	// Adjust frequency and duty cycle by ±5% using RX and RY potentiometers
 	int freqAdjustment = map(rxMapped, 0, 4095, -100, 100); // Map to ±5%
@@ -486,18 +531,75 @@ void loop() {
         dutyCycle += dutyCycle * dutyAdjustment / 100;
 
         baseFrequency = constrain(baseFrequency, minFreq, maxFreq);
-	dutyCycle = constrain(dutyCycle, 0, 1023);
+        dutyCycle = constrain(dutyCycle, 0, 1023);
 
         updatePWM(LEDC_TIMER, static_cast<int>(baseFrequency), bitrate);
-// Then you set duty cycles like normal
-	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, dutyCycle);
-	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 
-	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, dutyCycle);
-	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+	if (waveShape == WAVE_SAW) {
+		sawStep += sawIncrement;
+		if (sawStep >= sawMax) sawStep = 0;
+		setAllPWM(sawStep);
+		sawStep += sawIncrement;
+		sawIncrement = map(pot1Value, 0, 4095, 1, 64); // slow → fast ramp
 
-	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, dutyCycle);
-	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2);
+		if (sawStep >= sawMax) sawStep = 0; // Reset on overflow
+
+		ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, sawStep);
+		ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+		ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, sawStep);
+		ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+
+		ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, sawStep);
+		ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2);
+	} else
+
+	if (waveShape == WAVE_INV_SAW) {
+		sawStep -= sawIncrement;
+		if (sawStep <= 0) sawStep = sawMax;
+		setAllPWM(sawStep);
+	} else
+
+	if (waveShape == WAVE_SIN) {
+		static unsigned long lastSineUpdate = 0;
+		int sineDelay = map(pot1Value, 0, 4095, 2, 50);  // From fast to slow (~Hz)
+
+		if (millis() - lastSineUpdate >= sineDelay) {
+			lastSineUpdate = millis();
+
+			int indexA = sineIndex;
+			int indexB = (sineIndex + sineTableSize / 3) % sineTableSize;      // +120°
+			int indexC = (sineIndex + 2 * sineTableSize / 3) % sineTableSize;  // +240°
+
+			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, sineTable[indexA]);
+			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, sineTable[indexB]);
+			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+
+			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, sineTable[indexC]);
+			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2);
+
+			sineIndex = (sineIndex + 1) % sineTableSize;
+		}
+	} else
+		if (waveShape == WAVE_SQUARE) {
+		static bool toggle = false;
+		toggle = !toggle;
+		int value = toggle ? sawMax : 0;
+		setAllPWM(value);
+
+		} else {
+
+		ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, dutyCycle);
+		ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+
+		ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, dutyCycle);
+		ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+
+		ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, dutyCycle);
+		ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2);
+	}
 
 	// Adjust phase offset by ±5% using LX and LY potentiometers
 	int phaseOffset = map(lyMapped, 0, 4095, -5, 5); // Map to ±5%
