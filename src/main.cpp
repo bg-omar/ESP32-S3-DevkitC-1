@@ -115,6 +115,36 @@ bool isBurstOn = false;  // Track if we're in a burst or pause phase
 unsigned long lastSwitchTime = 0;
 int presetIndex = 0;    // Current frequency preset
 
+enum Option {
+        OPTION_FREQ_MODE = 0,
+        OPTION_BITRATE,
+        OPTION_DUTY_CYCLE,
+        OPTION_WAVE_SHAPE,
+        NUM_OPTIONS
+};
+
+const char *OPTION_NAMES[] = {
+        "Freq",
+        "Bits",
+        "Duty",
+        "Wave"
+};
+
+enum WaveShape {
+        WAVE_SAW = 0,
+        WAVE_SIN,
+        WAVE_SQUARE,
+        WAVE_INV_SAW,
+        NUM_WAVES
+};
+
+const char *WAVE_NAMES[] = {"saw", "sin", "square", "invSaw"};
+
+int currentOption = OPTION_FREQ_MODE;
+int bitrate = 8;                // default resolution bits
+int dutyCycleSetting = 512;     // default duty cycle
+int waveShape = WAVE_SAW;
+
 int buttonRState = LOW;
 int lastButtonRState = LOW;
 int buttonLState = LOW;
@@ -124,7 +154,7 @@ unsigned long debounceDelay = 50;  // 50 ms debounce delay
 
 int calculateSafeResolution(int pwmFreq) {
 	const uint32_t apb_clk = 80000000; // 80 MHz for ESP32-S3
-	int resolution = 15; // Start from maximum 15 bits
+	int resolution = 12; // Start from maximum 12 bits
 
 	while (resolution > 1) {
 		uint32_t div_param = apb_clk / (pwmFreq * (1 << resolution));
@@ -136,8 +166,8 @@ int calculateSafeResolution(int pwmFreq) {
 	return resolution -3;
 }
 
-void updatePWM(int timer_num, int freq_hz) {
-	int safeResolution = calculateSafeResolution(freq_hz);
+void updatePWM(int timer_num, int freq_hz, int resolution_bits) {
+        int safeResolution = resolution_bits > 0 ? resolution_bits : calculateSafeResolution(freq_hz);
 
 	ledc_timer_config_t ledc_timer = {
 			.speed_mode = LEDC_LOW_SPEED_MODE,
@@ -201,7 +231,7 @@ void setup() {
         display.print(" Lx="); display.print(POTENTIOMETER_LX_GPIO);
         display.print(" Ly="); display.print(POTENTIOMETER_LY_GPIO);
         display.display();
-        delay(2000);
+        delay(5000);
         display.clearDisplay();
         display.setCursor(0, 0);
         display.print("Initializing...");
@@ -210,8 +240,8 @@ void setup() {
 	// Disable touch functionality for GPIO 4 (T0)
 	touch_pad_deinit();
 
-	int initialFrequency = 1000; // or whatever your starting frequency is
-	int safeResolution = calculateSafeResolution(initialFrequency);
+        int initialFrequency = 1000; // or whatever your starting frequency is
+        int safeResolution = bitrate;
 	Serial.print("Initial Safe Resolution: ");
 	Serial.println(safeResolution);
 
@@ -260,14 +290,14 @@ void setup() {
 
 
 
-	ledc_timer_config_t ledc_timer = {
-			.speed_mode = LEDC_LOW_SPEED_MODE,
-			.duty_resolution = PWM_RESOLUTION,
-			.timer_num = LEDC_TIMER_0,
-			.freq_hz = 1000,
-			.clk_cfg = LEDC_AUTO_CLK
-	};
-	ledc_timer_config(&ledc_timer);
+        ledc_timer_config_t ledc_timer = {
+					.speed_mode = LEDC_LOW_SPEED_MODE,
+					.duty_resolution = (ledc_timer_bit_t)bitrate,
+					.timer_num = LEDC_TIMER_0,
+					.freq_hz = 1000,
+					.clk_cfg = LEDC_AUTO_CLK
+        };
+        ledc_timer_config(&ledc_timer);
 }
 
 void loop() {
@@ -294,12 +324,9 @@ void loop() {
 
                         // Print button state
                         if (buttonRState == LOW) {
-                                Serial.println("Button R Pressed");
-                                if (presetIndex < NUM_PRESETS - 1) presetIndex++;
-                                Serial.print("Preset: ");
-                                Serial.println(presetIndex);
-                        } else {
-                                Serial.println("Button R Released");
+                                if (currentOption < NUM_OPTIONS - 1) currentOption++;
+                                Serial.print("Option: ");
+                                Serial.println(currentOption);
                         }
                 }
         }
@@ -311,12 +338,9 @@ void loop() {
 
                         // Print button state
                         if (buttonLState == LOW) {
-                                Serial.println("Button L Pressed");
-                                if (presetIndex > 0) presetIndex--;
-                                Serial.print("Preset: ");
-                                Serial.println(presetIndex);
-                        } else {
-                                Serial.println("Button L Released");
+                                if (currentOption > 0) currentOption--;
+                                Serial.print("Option: ");
+                                Serial.println(currentOption);
                         }
                 }
         }
@@ -325,7 +349,23 @@ void loop() {
 	lastButtonLState = readingL;
         display.print("L: "); display.print(lastButtonLState ? "Off" : "On");
         display.print(" \t R: "); display.println(lastButtonRState ? "Off" : "On");
-        display.print("Preset: "); display.println(FREQUENCY_PRESETS[presetIndex].label);
+        display.print("Opt: "); display.print(OPTION_NAMES[currentOption]);
+        display.print(" ");
+        switch(currentOption) {
+                case OPTION_FREQ_MODE:
+                        display.println(FREQUENCY_PRESETS[presetIndex].label);
+                        break;
+                case OPTION_BITRATE:
+                        display.print(bitrate);
+                        display.println(" bits");
+                        break;
+                case OPTION_DUTY_CYCLE:
+                        display.println(dutyCycleSetting);
+                        break;
+                case OPTION_WAVE_SHAPE:
+                        display.println(WAVE_NAMES[waveShape]);
+                        break;
+        }
 
 	int pot1Raw = 0;
 	esp_err_t pot1Status = adc2_get_raw(POTENTIOMETER1_PIN, ADC_WIDTH_BIT_12, &pot1Raw);
@@ -354,6 +394,21 @@ void loop() {
 
 	display.print("1: "); display.print(pot1Value);
 	display.print(" \t 2: "); display.println(pot2Value);
+
+	switch(currentOption) {
+			case OPTION_FREQ_MODE:
+					presetIndex = map(pot2Value, 0, 2047, 0, NUM_PRESETS-1);
+					break;
+			case OPTION_BITRATE:
+					bitrate = map(pot2Value, 0, 2047, 1, 15);
+					break;
+			case OPTION_DUTY_CYCLE:
+					dutyCycleSetting = map(pot2Value, 0, 2047, 0, 1023);
+					break;
+			case OPTION_WAVE_SHAPE:
+					waveShape = map(pot2Value, 0, 2047, 0, NUM_WAVES-1);
+					break;
+	}
 
 	int potRxValue = main::smoothPotValue(potRxRaw, adcBuffer3, bufferSize);
 	int potRyValue = main::smoothPotValue(potRyRaw, adcBuffer4, bufferSize);
@@ -421,8 +476,7 @@ void loop() {
                                        maxFreq);
         baseFrequency = constrain(baseFrequency, minFreq, maxFreq);
 
-	int dutyCycle = map(pot2Value, 0, 2047, 0, 1023);
-	dutyCycle = constrain(dutyCycle, 0, 1023);
+        int dutyCycle = dutyCycleSetting;
 
 	// Adjust frequency and duty cycle by ±5% using RX and RY potentiometers
 	int freqAdjustment = map(rxMapped, 0, 4095, -100, 100); // Map to ±5%
@@ -434,7 +488,7 @@ void loop() {
         baseFrequency = constrain(baseFrequency, minFreq, maxFreq);
 	dutyCycle = constrain(dutyCycle, 0, 1023);
 
-        updatePWM(LEDC_TIMER, static_cast<int>(baseFrequency));
+        updatePWM(LEDC_TIMER, static_cast<int>(baseFrequency), bitrate);
 // Then you set duty cycles like normal
 	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, dutyCycle);
 	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
