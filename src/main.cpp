@@ -81,9 +81,9 @@ struct FreqPreset {
 };
 
 const FreqPreset FREQUENCY_PRESETS[] = {
-        {0.1f,    100.0f,   "0.1-100"},
-        {1.0f,    1000.0f,  "1-1000"},
-        {1.0f,    10000.0f, "1-10000"},
+        {5.0f,    100.0f,   "5-100"},
+        {25.0f,    1000.0f,  "25-1000"},
+        {50.0f,    10000.0f, "50-10000"},
         {1000.0f, 50000.0f, "1k-50k"},
         {10000.0f,150000.0f,"10k-150k"},
         {50000.0f,200000.0f,"50k-200k"}
@@ -160,7 +160,7 @@ int sineIndex = 0;
 
 int currentOption = OPTION_FREQ_MODE;
 int bitrate = 8;                // default resolution bits
-int dutyCycleSetting = 512;     // default duty cycle
+int dutyCycleSetting = 50;     // default duty cycle
 int waveShape = WAVE_SAW;
 
 int buttonRState = LOW;
@@ -183,6 +183,53 @@ int calculateSafeResolution(int pwmFreq) {
 	}
 	return resolution -3;
 }
+
+void safeUpdatePWM(int timer_num, int desiredFreq, int desiredBits, int* appliedFreq, int* appliedBits) {
+	const uint32_t apb_clk = 80000000;
+	int bits = desiredBits;
+	int freq = desiredFreq;
+
+	int attempt = 0;
+	while (((apb_clk / (freq * (1 << bits))) < 256 || (freq * (1 << bits)) > apb_clk) && attempt < 1000) {
+		if (bits > 1) {
+			bits--;
+		} else if (freq > 100) {
+			freq -= 100;  // decrement more aggressively to exit loop
+		} else {
+			break;
+		}
+		attempt++;
+	}
+
+	if (attempt >= 1000) {
+		Serial.println("[safePWM] ERROR: Could not find valid freq/resolution combo.");
+		freq = 1000;
+		bits = 8;
+	}
+
+	ledc_timer_config_t ledc_timer = {
+			.speed_mode = LEDC_LOW_SPEED_MODE,
+			.duty_resolution = (ledc_timer_bit_t)bits,
+			.timer_num = (ledc_timer_t)timer_num,
+			.freq_hz = (uint32_t)freq,
+			.clk_cfg = LEDC_AUTO_CLK
+	};
+
+	esp_err_t result = ledc_timer_config(&ledc_timer);
+
+	if (result == ESP_OK) {
+		Serial.printf("[safePWM] Timer %d OK: %d Hz @ %d-bit (div ~= %d)\n",
+					  timer_num, freq, bits, apb_clk / (freq * (1 << bits)));
+	} else {
+		Serial.println("[safePWM] FAILED to configure timer!");
+	}
+
+	if (appliedFreq) *appliedFreq = freq;
+	if (appliedBits) *appliedBits = bits;
+}
+
+
+
 
 void updatePWM(int timer_num, int freq_hz, int resolution_bits) {
         int safeResolution = resolution_bits > 0 ? resolution_bits : calculateSafeResolution(freq_hz);
@@ -230,6 +277,9 @@ void setup() {
 	Serial.begin(115200);
 //	strip.begin();
 //	strip.show();
+	int initFreq, initBits;
+	safeUpdatePWM(LEDC_TIMER_0, 5000, 10, &initFreq, &initBits);
+	Serial.printf("Init PWM configured: %d Hz @ %d-bit\n", initFreq, initBits);
 
 	Wire.begin(OLED_SDA, OLED_SCL);
 
@@ -237,40 +287,40 @@ void setup() {
 		Serial.println(F("SSD1306 allocation failed"));
 		for(;;);
 	}
-        display.clearDisplay();
-        display.setTextSize(1);
-        display.setTextColor(SSD1306_WHITE);
-        display.setCursor(0, 0);
-        display.println("3-Phase:");
-        display.setCursor(0, 10);
-        display.print("P1="); display.print(PHASE_1_PIN);
-        display.print(" P2="); display.print(PHASE_2_PIN);
-        display.print(" P3="); display.print(PHASE_3_PIN);
-        display.setCursor(0, 20);
-        display.println("Inputs:");
-        display.setCursor(0, 30);
-        display.print("BtnL="); display.print(BUTTON_L_PIN);
-        display.print(" BtnR="); display.print(BUTTON_R_PIN);
-        display.setCursor(0, 40);
-        display.print("Pot1="); display.print(POTENTIOMETER1_GPIO);
-        display.print(" Pot2="); display.print(POTENTIOMETER2_GPIO);
-        display.setCursor(0, 50);
-        display.print("Rx="); display.print(POTENTIOMETER_RX_GPIO);
-        display.print(" Ry="); display.print(POTENTIOMETER_RY_GPIO);
-        display.print(" Lx="); display.print(POTENTIOMETER_LX_GPIO);
-        display.print(" Ly="); display.print(POTENTIOMETER_LY_GPIO);
-        display.display();
-        delay(5000);
-        display.clearDisplay();
-        display.setCursor(0, 0);
-        display.print("Initializing...");
-        display.display();
-        delay(500);
+	display.clearDisplay();
+	display.setTextSize(1);
+	display.setTextColor(SSD1306_WHITE);
+	display.setCursor(0, 0);
+	display.println("3-Phase:");
+	display.setCursor(0, 10);
+	display.print("P1="); display.print(PHASE_1_PIN);
+	display.print(" P2="); display.print(PHASE_2_PIN);
+	display.print(" P3="); display.print(PHASE_3_PIN);
+	display.setCursor(0, 20);
+	display.println("Inputs:");
+	display.setCursor(0, 30);
+	display.print("BtnL="); display.print(BUTTON_L_PIN);
+	display.print(" BtnR="); display.print(BUTTON_R_PIN);
+	display.setCursor(0, 40);
+	display.print("Pot1="); display.print(POTENTIOMETER1_GPIO);
+	display.print(" Pot2="); display.print(POTENTIOMETER2_GPIO);
+	display.setCursor(0, 50);
+	display.print("Rx="); display.print(POTENTIOMETER_RX_GPIO);
+	display.print(" Ry="); display.print(POTENTIOMETER_RY_GPIO);
+	display.print(" Lx="); display.print(POTENTIOMETER_LX_GPIO);
+	display.print(" Ly="); display.print(POTENTIOMETER_LY_GPIO);
+	display.display();
+	delay(5000);
+	display.clearDisplay();
+	display.setCursor(0, 0);
+	display.print("Initializing...");
+	display.display();
+	delay(500);
 	// Disable touch functionality for GPIO 4 (T0)
 	touch_pad_deinit();
 
-        int initialFrequency = 1000; // or whatever your starting frequency is
-        int safeResolution = bitrate;
+	int initialFrequency = 1000; // or whatever your starting frequency is
+	int safeResolution = bitrate;
 	Serial.print("Initial Safe Resolution: ");
 	Serial.println(safeResolution);
 
@@ -533,7 +583,10 @@ void loop() {
         baseFrequency = constrain(baseFrequency, minFreq, maxFreq);
         dutyCycle = constrain(dutyCycle, 0, 1023);
 
-        updatePWM(LEDC_TIMER, static_cast<int>(baseFrequency), bitrate);
+		int actualFreq, actualBits;
+		safeUpdatePWM(LEDC_TIMER, static_cast<int>(baseFrequency), bitrate, &actualFreq, &actualBits);
+
+
 
 	if (waveShape == WAVE_SAW) {
 		sawStep += sawIncrement;
@@ -636,15 +689,24 @@ void loop() {
 		} else {
 			// During burst: Ensure PWM is running
 			// Update PWM outputs
-                        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, static_cast<int>(phase1Frequency));
+
+			int f, b;
+			safeUpdatePWM(LEDC_TIMER_0, static_cast<int>(phase1Frequency), 8, &f, &b); // or desiredBits = 8 or 10
+
 			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, dutyCycle);
 			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 
-                        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, static_cast<int>(phase2Frequency));
+
+			int f2, b2;
+			safeUpdatePWM(LEDC_TIMER_0, static_cast<int>(phase2Frequency), 8, &f2, &b2); // or desiredBits = 8 or 10
+
 			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, dutyCycle);
 			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
 
-                        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, static_cast<int>(phase3Frequency));
+
+			int f3, b3;
+			safeUpdatePWM(LEDC_TIMER_0, static_cast<int>(phase3Frequency), 8, &f3, &b3); // or desiredBits = 8 or 10
+
 			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, dutyCycle);
 			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2);
 		}
@@ -659,18 +721,18 @@ void loop() {
         long div_param = (APB_CLK_FREQ) / (static_cast<int>(phase1Frequency) * (2 ^ 4096));
 	display.print("div_param: "); display.println(div_param);
 
-	// Set frequency for the current note
-        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER, static_cast<int>(baseFrequency));
-
-	// Set duty cycle to 50% (turn on the speaker)
-	int speakerDutyCycle = constrain(2 * dutyCycle, 0, 1023);
-	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, speakerDutyCycle);
-	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
-
-
-	// Turn off the speaker (0 duty cycle)
-	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, 0);
-	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
+//	// Set frequency for the current note
+//        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER, static_cast<int>(baseFrequency));
+//
+//	// Set duty cycle to 50% (turn on the speaker)
+//	int speakerDutyCycle = constrain(2 * dutyCycle, 0, 1023);
+//	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, speakerDutyCycle);
+//	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
+//
+//
+//	// Turn off the speaker (0 duty cycle)
+//	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL, 0);
+//	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL);
 
 	display.display();
 }
