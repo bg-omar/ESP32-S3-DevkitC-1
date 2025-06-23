@@ -73,6 +73,10 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define PHASE_SHIFT_120 (1024 / 3)        // 120° phase shift
 #define PHASE_SHIFT_240 (2 * PHASE_SHIFT_120)
 
+// Test mode frequency limits
+#define TEST_MIN_FREQUENCY 1
+#define TEST_MAX_FREQUENCY 100
+
 
 
 
@@ -95,6 +99,7 @@ int burstDuration = 50;  // Burst duration in milliseconds
 int pauseDuration = 100; // Pause duration in milliseconds
 bool isBurstOn = false;  // Track if we're in a burst or pause phase
 unsigned long lastSwitchTime = 0;
+bool testMode = false;  // Toggle for low frequency testing
 
 int buttonRState = LOW;
 int lastButtonRState = LOW;
@@ -264,38 +269,43 @@ void loop() {
 		lastDebounceTimeL = millis();
 	}
 
-	// If stable for debounce delay, update state
-	if ((millis() - lastDebounceTimeR) > debounceDelay) {
-		if (readingR != buttonRState) {
-			buttonRState = readingR;
+        // If stable for debounce delay, update state
+        if ((millis() - lastDebounceTimeR) > debounceDelay) {
+                if (readingR != buttonRState) {
+                        buttonRState = readingR;
 
-			// Print button state
-			if (buttonRState == LOW) {
-				Serial.println("Button R Pressed");
-			} else {
-				Serial.println("Button R Released");
-			}
-		}
-	}
+                        // Print button state
+                        if (buttonRState == LOW) {
+                                Serial.println("Button R Pressed");
+                                testMode = false;
+                                Serial.println("Normal mode");
+                        } else {
+                                Serial.println("Button R Released");
+                        }
+                }
+        }
 
-	// If stable for debounce delay, update state
-	if ((millis() - lastDebounceTimeL) > debounceDelay) {
-		if (readingL != buttonLState) {
-			buttonLState = readingL;
+        // If stable for debounce delay, update state
+        if ((millis() - lastDebounceTimeL) > debounceDelay) {
+                if (readingL != buttonLState) {
+                        buttonLState = readingL;
 
-			// Print button state
-			if (buttonLState == LOW) {
-				Serial.println("Button L Pressed");
-			} else {
-				Serial.println("Button L Released");
-			}
-		}
-	}
+                        // Print button state
+                        if (buttonLState == LOW) {
+                                Serial.println("Button L Pressed");
+                                testMode = true;
+                                Serial.println("Test mode");
+                        } else {
+                                Serial.println("Button L Released");
+                        }
+                }
+        }
 
 	lastButtonRState = readingR;
 	lastButtonLState = readingL;
-	display.print("L: "); display.print(lastButtonLState ? "Off" : "On");
-	display.print(" \t R: "); display.println(lastButtonRState ? "Off" : "On");
+        display.print("L: "); display.print(lastButtonLState ? "Off" : "On");
+        display.print(" \t R: "); display.println(lastButtonRState ? "Off" : "On");
+        display.print("Mode: "); display.println(testMode ? "Test" : "Normal");
 
 	int pot1Raw = 0;
 	esp_err_t pot1Status = adc2_get_raw(POTENTIOMETER1_PIN, ADC_WIDTH_BIT_12, &pot1Raw);
@@ -381,9 +391,11 @@ void loop() {
 	if (pot1Value < minPotValue) minPotValue = pot1Value;
 	if (pot1Value > maxPotValue) maxPotValue = pot1Value;
 
-	// Base frequency and duty cycle calculation
-	int baseFrequency = map(pot1Value, minPotValue, maxPotValue, 0, PWM_MAX_FREQUENCY);
-	baseFrequency = constrain(baseFrequency, 1, PWM_MAX_FREQUENCY);
+        // Base frequency and duty cycle calculation
+        int maxFreq = testMode ? TEST_MAX_FREQUENCY : PWM_MAX_FREQUENCY;
+        int minFreq = testMode ? TEST_MIN_FREQUENCY : 1;
+        int baseFrequency = map(pot1Value, minPotValue, maxPotValue, 0, maxFreq);
+        baseFrequency = constrain(baseFrequency, minFreq, maxFreq);
 
 	int dutyCycle = map(pot2Value, 0, 2047, 0, 1023);
 	dutyCycle = constrain(dutyCycle, 0, 1023);
@@ -392,10 +404,10 @@ void loop() {
 	int freqAdjustment = map(rxMapped, 0, 4095, -100, 100); // Map to ±5%
 	int dutyAdjustment = map(ryMapped, 0, 4095, -15, 15); // Map to ±5%
 
-	baseFrequency += baseFrequency * freqAdjustment / 100;
-	dutyCycle += dutyCycle * dutyAdjustment / 100;
+        baseFrequency += baseFrequency * freqAdjustment / 100;
+        dutyCycle += dutyCycle * dutyAdjustment / 100;
 
-	baseFrequency = constrain(baseFrequency, 1, PWM_MAX_FREQUENCY);
+        baseFrequency = constrain(baseFrequency, minFreq, maxFreq);
 	dutyCycle = constrain(dutyCycle, 0, 1023);
 
 	updatePWM(LEDC_TIMER, baseFrequency);
@@ -417,8 +429,8 @@ void loop() {
 	int phase2Frequency = baseFrequency + baseFrequency * phaseOffset / 100;
 	int phase3Frequency = baseFrequency - baseFrequency * phaseOffset / 100;
 
-	phase2Frequency = constrain(phase2Frequency, 1, PWM_MAX_FREQUENCY);
-	phase3Frequency = constrain(phase3Frequency, 1, PWM_MAX_FREQUENCY);
+        phase2Frequency = constrain(phase2Frequency, minFreq, maxFreq);
+        phase3Frequency = constrain(phase3Frequency, minFreq, maxFreq);
 
 	display.print("phase1: "); display.println(phase1Frequency);
 	display.print("phase2: "); display.print(phase2Frequency);
