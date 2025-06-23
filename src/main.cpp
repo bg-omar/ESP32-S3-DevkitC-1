@@ -73,6 +73,24 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define PHASE_SHIFT_120 (1024 / 3)        // 120° phase shift
 #define PHASE_SHIFT_240 (2 * PHASE_SHIFT_120)
 
+// Preset frequency ranges
+struct FreqPreset {
+        float minFreq;
+        float maxFreq;
+        const char *label;
+};
+
+const FreqPreset FREQUENCY_PRESETS[] = {
+        {0.1f,    100.0f,   "0.1-100"},
+        {1.0f,    1000.0f,  "1-1000"},
+        {1.0f,    10000.0f, "1-10000"},
+        {1000.0f, 50000.0f, "1k-50k"},
+        {10000.0f,150000.0f,"10k-150k"},
+        {50000.0f,200000.0f,"50k-200k"}
+};
+
+const int NUM_PRESETS = sizeof(FREQUENCY_PRESETS)/sizeof(FREQUENCY_PRESETS[0]);
+
 
 
 
@@ -95,6 +113,7 @@ int burstDuration = 50;  // Burst duration in milliseconds
 int pauseDuration = 100; // Pause duration in milliseconds
 bool isBurstOn = false;  // Track if we're in a burst or pause phase
 unsigned long lastSwitchTime = 0;
+int presetIndex = 0;    // Current frequency preset
 
 int buttonRState = LOW;
 int lastButtonRState = LOW;
@@ -141,6 +160,10 @@ void updatePWM(int timer_num, int freq_hz) {
 	} else {
 		Serial.println("[PWM] Timer update FAILED!");
 	}
+}
+
+static float mapFloat(float x, float in_min, float in_max, float out_min, float out_max) {
+        return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
 
@@ -264,38 +287,45 @@ void loop() {
 		lastDebounceTimeL = millis();
 	}
 
-	// If stable for debounce delay, update state
-	if ((millis() - lastDebounceTimeR) > debounceDelay) {
-		if (readingR != buttonRState) {
-			buttonRState = readingR;
+        // If stable for debounce delay, update state
+        if ((millis() - lastDebounceTimeR) > debounceDelay) {
+                if (readingR != buttonRState) {
+                        buttonRState = readingR;
 
-			// Print button state
-			if (buttonRState == LOW) {
-				Serial.println("Button R Pressed");
-			} else {
-				Serial.println("Button R Released");
-			}
-		}
-	}
+                        // Print button state
+                        if (buttonRState == LOW) {
+                                Serial.println("Button R Pressed");
+                                if (presetIndex < NUM_PRESETS - 1) presetIndex++;
+                                Serial.print("Preset: ");
+                                Serial.println(presetIndex);
+                        } else {
+                                Serial.println("Button R Released");
+                        }
+                }
+        }
 
-	// If stable for debounce delay, update state
-	if ((millis() - lastDebounceTimeL) > debounceDelay) {
-		if (readingL != buttonLState) {
-			buttonLState = readingL;
+        // If stable for debounce delay, update state
+        if ((millis() - lastDebounceTimeL) > debounceDelay) {
+                if (readingL != buttonLState) {
+                        buttonLState = readingL;
 
-			// Print button state
-			if (buttonLState == LOW) {
-				Serial.println("Button L Pressed");
-			} else {
-				Serial.println("Button L Released");
-			}
-		}
-	}
+                        // Print button state
+                        if (buttonLState == LOW) {
+                                Serial.println("Button L Pressed");
+                                if (presetIndex > 0) presetIndex--;
+                                Serial.print("Preset: ");
+                                Serial.println(presetIndex);
+                        } else {
+                                Serial.println("Button L Released");
+                        }
+                }
+        }
 
 	lastButtonRState = readingR;
 	lastButtonLState = readingL;
-	display.print("L: "); display.print(lastButtonLState ? "Off" : "On");
-	display.print(" \t R: "); display.println(lastButtonRState ? "Off" : "On");
+        display.print("L: "); display.print(lastButtonLState ? "Off" : "On");
+        display.print(" \t R: "); display.println(lastButtonRState ? "Off" : "On");
+        display.print("Preset: "); display.println(FREQUENCY_PRESETS[presetIndex].label);
 
 	int pot1Raw = 0;
 	esp_err_t pot1Status = adc2_get_raw(POTENTIOMETER1_PIN, ADC_WIDTH_BIT_12, &pot1Raw);
@@ -381,9 +411,15 @@ void loop() {
 	if (pot1Value < minPotValue) minPotValue = pot1Value;
 	if (pot1Value > maxPotValue) maxPotValue = pot1Value;
 
-	// Base frequency and duty cycle calculation
-	int baseFrequency = map(pot1Value, minPotValue, maxPotValue, 0, PWM_MAX_FREQUENCY);
-	baseFrequency = constrain(baseFrequency, 1, PWM_MAX_FREQUENCY);
+        // Base frequency and duty cycle calculation using preset range
+        float maxFreq = FREQUENCY_PRESETS[presetIndex].maxFreq;
+        float minFreq = FREQUENCY_PRESETS[presetIndex].minFreq;
+        float baseFrequency = mapFloat((float)pot1Value,
+                                       (float)minPotValue,
+                                       (float)maxPotValue,
+                                       0.0f,
+                                       maxFreq);
+        baseFrequency = constrain(baseFrequency, minFreq, maxFreq);
 
 	int dutyCycle = map(pot2Value, 0, 2047, 0, 1023);
 	dutyCycle = constrain(dutyCycle, 0, 1023);
@@ -392,13 +428,13 @@ void loop() {
 	int freqAdjustment = map(rxMapped, 0, 4095, -100, 100); // Map to ±5%
 	int dutyAdjustment = map(ryMapped, 0, 4095, -15, 15); // Map to ±5%
 
-	baseFrequency += baseFrequency * freqAdjustment / 100;
-	dutyCycle += dutyCycle * dutyAdjustment / 100;
+        baseFrequency += baseFrequency * freqAdjustment / 100;
+        dutyCycle += dutyCycle * dutyAdjustment / 100;
 
-	baseFrequency = constrain(baseFrequency, 1, PWM_MAX_FREQUENCY);
+        baseFrequency = constrain(baseFrequency, minFreq, maxFreq);
 	dutyCycle = constrain(dutyCycle, 0, 1023);
 
-	updatePWM(LEDC_TIMER, baseFrequency);
+        updatePWM(LEDC_TIMER, static_cast<int>(baseFrequency));
 // Then you set duty cycles like normal
 	ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, dutyCycle);
 	ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
@@ -413,12 +449,12 @@ void loop() {
 	int phaseOffset = map(lyMapped, 0, 4095, -5, 5); // Map to ±5%
 
 	// Apply the phase offset to the PWM frequency
-	int phase1Frequency = baseFrequency;
-	int phase2Frequency = baseFrequency + baseFrequency * phaseOffset / 100;
-	int phase3Frequency = baseFrequency - baseFrequency * phaseOffset / 100;
+        float phase1Frequency = baseFrequency;
+        float phase2Frequency = baseFrequency + baseFrequency * phaseOffset / 100.0f;
+        float phase3Frequency = baseFrequency - baseFrequency * phaseOffset / 100.0f;
 
-	phase2Frequency = constrain(phase2Frequency, 1, PWM_MAX_FREQUENCY);
-	phase3Frequency = constrain(phase3Frequency, 1, PWM_MAX_FREQUENCY);
+        phase2Frequency = constrain(phase2Frequency, minFreq, maxFreq);
+        phase3Frequency = constrain(phase3Frequency, minFreq, maxFreq);
 
 	display.print("phase1: "); display.println(phase1Frequency);
 	display.print("phase2: "); display.print(phase2Frequency);
@@ -444,15 +480,15 @@ void loop() {
 		} else {
 			// During burst: Ensure PWM is running
 			// Update PWM outputs
-			ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, phase1Frequency);
+                        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, static_cast<int>(phase1Frequency));
 			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, dutyCycle);
 			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 
-			ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, phase2Frequency);
+                        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, static_cast<int>(phase2Frequency));
 			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, dutyCycle);
 			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
 
-			ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, phase3Frequency);
+                        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, static_cast<int>(phase3Frequency));
 			ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2, dutyCycle);
 			ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_2);
 		}
@@ -464,11 +500,11 @@ void loop() {
 		}
 	}
 
-	long div_param = (APB_CLK_FREQ) / (phase1Frequency * (2 ^ 4096));
+        long div_param = (APB_CLK_FREQ) / (static_cast<int>(phase1Frequency) * (2 ^ 4096));
 	display.print("div_param: "); display.println(div_param);
 
 	// Set frequency for the current note
-	ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER, baseFrequency);
+        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER, static_cast<int>(baseFrequency));
 
 	// Set duty cycle to 50% (turn on the speaker)
 	int speakerDutyCycle = constrain(2 * dutyCycle, 0, 1023);
